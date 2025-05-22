@@ -1,1 +1,0 @@
-add_executable(sem2_lab1_3 Lab1_3.cpp)

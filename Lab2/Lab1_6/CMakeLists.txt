@@ -1,1 +1,0 @@
-add_executable(lab1_6 Lab1_6.cpp)

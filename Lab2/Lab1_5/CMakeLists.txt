@@ -1,1 +1,0 @@
-add_executable(lab1_5 Lab1_5.c)
