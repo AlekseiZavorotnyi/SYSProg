@@ -289,6 +289,7 @@ int main() {
     }
 
     std::cout << "All threads have been finished!" << std::endl;
+
     std::cout << "Elevator operation statistics:\n\n";
 
     std::cout << std::left
