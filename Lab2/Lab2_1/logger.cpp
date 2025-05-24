@@ -95,7 +95,7 @@ public:
 
 int main() {
     Logger* my_logger = LoggerBuilder()
-                            .set_level(Logger::WARNING)
+                            .set_level(Logger::DEBUG)
                             .add_handler(std::cout)
                             .add_handler(std::make_unique<std::ofstream>("log.txt"))
                             .make_object();
