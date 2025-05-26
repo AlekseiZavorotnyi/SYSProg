@@ -7,6 +7,7 @@
 #include <ctime>
 #include <thread>
 #include <mutex>
+#include <random>
 
 class LoggerBuilder;
 
@@ -50,8 +51,9 @@ public:
         if (level > log_level) {
             return;
         }
+        std::string log_line = timestamp() + " --> " + label + ": " + msg + "\n";
         for (auto&& out : handlers) {
-            (*out) << timestamp() + " --> " << label << ": " << msg << std::endl;
+            (*out) << log_line;
         }
     }
 
@@ -114,9 +116,9 @@ private:
     bool CLOSED_DOORS = true;
     int max_floors = 2;
     int capacity = 2;
-    size_t inside = 0;
+    int inside = 0;
     int floor = 1;
-    size_t people_count = 0;
+    int people_count = 0;
     int floor_count = 0;
     int time_wait = 0;
     int calls_count = 0;
@@ -131,7 +133,7 @@ public:
     [[nodiscard]] int cur_cap() const {
         return this->capacity;
     }
-    [[nodiscard]] size_t cur_inside() const {
+    [[nodiscard]] int cur_inside() const {
         return this->inside;
     }
     [[nodiscard]] int cur_floor() const {
@@ -140,14 +142,14 @@ public:
     [[nodiscard]] bool cur_doors() const {
         return this->CLOSED_DOORS;
     }
-    [[nodiscard]] size_t get_people_count() const {
+    [[nodiscard]] int get_people_count() const {
         return this->people_count;
     }
     [[nodiscard]] int get_floor_count() const {
         return this->floor_count;
     }
     [[nodiscard]] int get_time_wait() const {
-        return this->time_wait / this->calls_count;
+        return calls_count > 0 ? time_wait / calls_count : 0;
     }
 
     std::vector<std::vector<Person>>& get_people() {
@@ -178,14 +180,23 @@ public:
             my_logger->info("Doors is already opened");
         }
     }
-    void change_inside(size_t came_in, size_t came_out, Logger* my_logger) {
-        if (inside - came_out + came_in > capacity || inside < came_out) {
-            my_logger->critical("Out of capacity");
+    void change_inside(int came_in, int came_out, Logger* my_logger) {
+        if (came_out > inside) {
+            my_logger->critical("Adjusting came_out from " + std::to_string(came_out) +
+                              " to " + std::to_string(inside));
+            came_out = inside;
+        }
+        if (inside - came_out + came_in > capacity) {
+            int old_came_in = came_in;
+            came_in = capacity - (inside - came_out);
+            my_logger->warning("Reducing came_in from " + std::to_string(old_came_in) +
+                             " to " + std::to_string(came_in));
         }
         time_wait++;
         people_count += came_in;
         inside += came_in - came_out;
-        my_logger->info("People inside has been changed");
+        my_logger->info("People inside changed from " + std::to_string(inside - came_in + came_out) +
+                       " to " + std::to_string(inside));
     }
     void change_floor(int future_floor, Logger* my_logger) {
         if (future_floor != floor) {
@@ -198,67 +209,72 @@ public:
         }
     }
     void add_person(const Person &person) {
-        bool group_exists = false;
-        for (std::vector<Person> group : people) {
+        for (auto& group : people) {
             if (group[0].get_dir() == person.get_dir()) {
                 group.push_back(person);
-                group_exists = true;
+                return;
             }
         }
-        if (group_exists == false) {
-            std::vector<Person> group = {person};
-            people.push_back(group);
-        }
+        people.push_back({person});
     }
 };
 
-
 void Generate_elevator_calls(int thread_id, Lift *lift, Logger* my_logger) {
-    std::cout << "Thread #" << thread_id << " started\n";
-    std::srand(time(nullptr));
+    std::string str_thread = "Thread #" + std::to_string(thread_id) + " started\n";
+    std::cout << str_thread;
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    std::uniform_int_distribution<> rand_calls_dist(5, 15);
 
-    int random_calls = rand() % 10 + 5;
+    int random_calls = rand_calls_dist(gen);
     while (random_calls > 0) {
+        int next_floor = lift->cur_floor();
+        auto people_inside = lift->get_people();
+        if (!people_inside.empty()) {
+            next_floor = people_inside.front()[0].get_dir();
+        }
+
+        lift->change_floor(next_floor, my_logger);
+
         lift->change_doors(false, my_logger);
-        size_t came_out = 0;
-        std::vector<std::vector<Person>> people_inside = lift->get_people();
+        int came_out = 0;
+        people_inside = lift->get_people();
         if (!people_inside.empty() && people_inside.front()[0].get_dir() == lift->cur_floor()) {
             came_out = people_inside.front().size();
             lift->remove_first_group();
         }
-        size_t came_in = rand() % (lift->cur_cap() - (lift->cur_inside() - came_out) + 1);
-        for (int i = 0; i < came_in; i++) {
-            int person_direction = rand() % lift->cur_max_floors() + 1;
-            Person cur_person(person_direction);
-            lift->add_person(cur_person);
-        }
-        lift->change_inside(came_in, came_out, my_logger);
-        lift->change_doors(true, my_logger);
-        int next_floor = lift->cur_floor();
-        if (!people_inside.empty()) {
-            next_floor = people_inside.front()[0].get_dir();
-        }
-        lift->change_floor(next_floor, my_logger);
-        random_calls--;
-        if (random_calls == 0) {
-            while(lift->cur_inside() != 0) {
-                lift->change_doors(false, my_logger);
-                people_inside = lift->get_people();
-                if (!people_inside.empty() && people_inside.front()[0].get_dir() == lift->cur_floor()) {
-                    came_out = people_inside.front().size();
-                    lift->remove_first_group();
-                }
-                lift->change_inside(0, came_out, my_logger);
-                lift->change_doors(true, my_logger);
-                next_floor = lift->cur_floor();
-                if (!people_inside.empty()) {
-                    next_floor = people_inside.front()[0].get_dir();
-                }
-                lift->change_floor(next_floor, my_logger);
+        lift->change_inside(0, came_out, my_logger);
+
+        int max_possible = lift->cur_cap() - lift->cur_inside();
+        if (max_possible > 0) {
+            std::uniform_int_distribution<> came_in_dist(1, max_possible);
+            int came_in = came_in_dist(gen);
+            for (int i = 0; i < came_in; i++) {
+                std::uniform_int_distribution<> person_dir_dist(1, lift->cur_max_floors());
+                int person_direction = person_dir_dist(gen);
+                Person cur_person(person_direction);
+                lift->add_person(cur_person);
             }
+            lift->change_inside(came_in, 0, my_logger);
         }
+
+        lift->change_doors(true, my_logger);
+        random_calls--;
     }
-    std::cout << "Thread #" << thread_id << " finished\n";
+
+    // Выпускаем всех оставшихся людей
+    while (lift->cur_inside() > 0) {
+        auto people_inside = lift->get_people();
+        int next_floor = people_inside.front()[0].get_dir();
+        lift->change_floor(next_floor, my_logger);
+        lift->change_doors(false, my_logger);
+        int came_out = people_inside.front().size();
+        lift->remove_first_group();
+        lift->change_inside(0, came_out, my_logger);
+        lift->change_doors(true, my_logger);
+    }
+    str_thread = "Thread #" + std::to_string(thread_id) + " finished\n";
+    std::cout << str_thread;
 }
 
 int main() {
@@ -270,11 +286,11 @@ int main() {
 
     Logger* my_logger = LoggerBuilder()
                             .set_level(Logger::DEBUG)
-                            .add_handler(std::cout)
+                            //.add_handler(std::cout)
                             .add_handler(std::move(log_file))
                             .make_object();
 
-    const int num_threads = 5;
+    const int num_threads = 3;
 
     std::vector<std::thread> threads;
     std::vector<std::unique_ptr<Lift>> lifts;

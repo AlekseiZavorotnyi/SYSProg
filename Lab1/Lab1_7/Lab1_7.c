@@ -8,124 +8,108 @@
 #include <pwd.h>
 #include <grp.h>
 
-enum {
-    NF,
-    LA,
-    L,
+typedef enum {
+    SIMPLE_MODE,
+    DETAILED_MODE,
+    ALL_MODE,
     SUCCESS = 0,
-    ERROR_READ_FILE_PATH,
-    ERROR_OPENING_FILE,
-    ERROR_GETTING_FILE_STAT,
-    ERROR_OPENING_DIR,
+    ERROR_READ_PATH,
+    ERROR_OPEN_FILE,
+    ERROR_FILE_STAT,
+    ERROR_OPEN_DIR,
     ERROR_UNKNOWN_FLAG,
-};
+} StatusCode;
 
-void getFileType(const mode_t mode, char* accR) {
+typedef enum {
+    COLOR_RESET = 0,
+    COLOR_GREEN = 32,
+    COLOR_BLUE_ON_GREEN = 42
+} TextColor;
+
+void set_file_permissions(const mode_t mode, char* permissions) {
     switch (mode & S_IFMT) {
-        case S_IFREG: {
-            accR[0] = '-';
-            break;
-        }
-        case S_IFDIR: {
-            accR[0] = 'd';
-            break;
-        }
-        case S_IFBLK: {
-            accR[0] = 'b';
-            break;
-        }
-        case S_IFCHR: {
-            accR[0] = 'c';
-            break;
-        }
-        case S_IFIFO: {
-            accR[0] = 'p';
-            break;
-        }
-        case S_IFSOCK: {
-            accR[0] = 's';
-            break;
-        }
-        case S_IFLNK: {
-            accR[0] = 'l';
-            break;
-        }
-        default: {
-            perror("getFileType");
-            break;
-        }
+        case S_IFREG: permissions[0] = '-'; break;
+        case S_IFDIR: permissions[0] = 'd'; break;
+        case S_IFBLK: permissions[0] = 'b'; break;
+        case S_IFCHR: permissions[0] = 'c'; break;
+        case S_IFIFO: permissions[0] = 'p'; break;
+        case S_IFSOCK: permissions[0] = 's'; break;
+        case S_IFLNK: permissions[0] = 'l'; break;
+        default: perror("set_file_permissions"); break;
     }
-    accR[1] = (mode & S_IRUSR) ? 'r' : '-';
-    accR[2] = (mode & S_IWUSR) ? 'w' : '-';
-    accR[3] = (mode & S_IXUSR) ? 'x' : '-';
-    accR[4] = (mode & S_IRGRP) ? 'r' : '-';
-    accR[5] = (mode & S_IWGRP) ? 'w' : '-';
-    accR[6] = (mode & S_IXGRP) ? 'x' : '-';
-    accR[7] = (mode & S_IROTH) ? 'r' : '-';
-    accR[8] = (mode & S_IWOTH) ? 'w' : '-';
-    accR[9] = (mode & S_IXOTH) ? 'x' : '-';
-    accR[10] = '\0';
+
+    permissions[1] = (mode & S_IRUSR) ? 'r' : '-';
+    permissions[2] = (mode & S_IWUSR) ? 'w' : '-';
+    permissions[3] = (mode & S_IXUSR) ? 'x' : '-';
+    permissions[4] = (mode & S_IRGRP) ? 'r' : '-';
+    permissions[5] = (mode & S_IWGRP) ? 'w' : '-';
+    permissions[6] = (mode & S_IXGRP) ? 'x' : '-';
+    permissions[7] = (mode & S_IROTH) ? 'r' : '-';
+    permissions[8] = (mode & S_IWOTH) ? 'w' : '-';
+    permissions[9] = (mode & S_IXOTH) ? 'x' : '-';
+    permissions[10] = '\0';
 }
 
-int LsDir(DIR* dir, const char* dir_name, const int flag) {
-    struct dirent *ent;
-    struct stat file_stat;
+void print_colored(const char* text, TextColor color) {
+    if (color == COLOR_BLUE_ON_GREEN) {
+        printf("\033[42;34m%s\033[0m", text);
+    } else {
+        printf("\033[%dm%s\033[0m", color, text);
+    }
+}
 
-    printf("For %s: \n", dir_name);
-    int ret = chdir(dir_name);
-    if (ret != 0) {
-        return ERROR_OPENING_DIR;
+StatusCode list_directory(DIR* dir, const char* dir_path, const int display_mode) {
+    struct dirent *entry;
+    struct stat file_info;
+
+    printf("Contents of %s:\n", dir_path);
+
+    if (chdir(dir_path)) {
+        return ERROR_OPEN_DIR;
     }
 
-    while ((ent = readdir(dir)) != NULL) {
-        if (flag == L && ent->d_name[0] == '.') {
+    while ((entry = readdir(dir)) != NULL) {
+        // Skip hidden files in detailed mode without -a
+        if (display_mode == DETAILED_MODE && entry->d_name[0] == '.') {
             continue;
         }
-        const int fd = open(ent->d_name, O_RDONLY, "r");
+
+        const int fd = open(entry->d_name, O_RDONLY);
         if (fd < 0) {
-            return ERROR_OPENING_FILE;
+            return ERROR_OPEN_FILE;
         }
 
-        ret = fstat(fd, &file_stat);
-        if (ret < 0) {
+        if (fstat(fd, &file_info) < 0) {
             close(fd);
-            return ERROR_GETTING_FILE_STAT;
+            return ERROR_FILE_STAT;
         }
 
-        if (flag == NF) {
-            if (file_stat.st_mode & S_IFDIR) {
-                printf("\033[42;34m%s\033[0m ", ent->d_name);
-            } else {
-                printf("\033[32m%s\033[0m ", ent->d_name);
-            }
+        if (display_mode == SIMPLE_MODE) {
+            TextColor color = S_ISDIR(file_info.st_mode) ? COLOR_BLUE_ON_GREEN : COLOR_GREEN;
+            print_colored(entry->d_name, color);
+            printf(" ");
         }
-
-        if (flag == LA || flag == L) {
-            const struct passwd *owner = getpwuid(file_stat.st_uid);
-            if (owner == NULL) {
-                printf("Couldn't find the owner's record.\n");
-                return ERROR_GETTING_FILE_STAT;
-            }
-            const struct group *group = getgrgid(file_stat.st_gid);
-            if (group == NULL) {
-                printf("Couldn't find the group's record.\n");
-                return ERROR_GETTING_FILE_STAT;
+        else if (display_mode == DETAILED_MODE || display_mode == ALL_MODE) {
+            const struct passwd *owner = getpwuid(file_info.st_uid);
+            const struct group *group = getgrgid(file_info.st_gid);
+            if (!owner || !group) {
+                close(fd);
+                return ERROR_FILE_STAT;
             }
 
-            char accessR[11];
-            getFileType(file_stat.st_mode, accessR);
+            char permissions[11];
+            set_file_permissions(file_info.st_mode, permissions);
 
-            char buf[20];
-            const struct tm *tm = localtime(&file_stat.st_mtime);
-            strftime(buf, sizeof(buf), "%b %d %H:%M", tm);
+            char time_buf[20];
+            strftime(time_buf, sizeof(time_buf), "%b %d %H:%M", localtime(&file_info.st_mtime));
 
-            if (accessR[0] == 'd') {
-                printf("%10s %2ld %s %s %7ld %s \033[42;34m%s\033[0m\n", accessR,
-                    file_stat.st_nlink, owner->pw_name, group->gr_name, file_stat.st_size, buf, ent->d_name);
-            } else {
-                printf("%10s %2ld %s %s %7ld %s \033[32m%s\033[0m\n", accessR, file_stat.st_nlink,
-                owner->pw_name, group->gr_name, file_stat.st_size, buf, ent->d_name);
-            }
+            printf("%10s %2ld %8s %8s %7ld %s ",
+                   permissions, file_info.st_nlink, owner->pw_name,
+                   group->gr_name, file_info.st_size, time_buf);
+
+            TextColor color = S_ISDIR(file_info.st_mode) ? COLOR_BLUE_ON_GREEN : COLOR_GREEN;
+            print_colored(entry->d_name, color);
+            printf("\n");
         }
         close(fd);
     }
@@ -133,54 +117,50 @@ int LsDir(DIR* dir, const char* dir_name, const int flag) {
     return SUCCESS;
 }
 
-int ls(const int cnt, const char **str_dirs) {
-    int err;
-    int flag = NF;
-    if (strcmp(str_dirs[cnt - 1], "-l") == 0) {
-        flag = L;
-    }
-    if (strcmp(str_dirs[cnt - 1], "-la") == 0) {
-        flag = LA;
-    }
+StatusCode process_arguments(int argc, const char **argv) {
+    int display_mode = SIMPLE_MODE;
+    int flag_index = argc - 1;
 
-    if (cnt == 1 || (cnt == 2 && flag != NF)) {
-        char progpath[1024];
-        ssize_t len = readlink("/proc/self/exe", progpath, sizeof(progpath) - 1);
-        if (len == -1) {
-            return ERROR_READ_FILE_PATH;
+    // Determine display mode from last argument
+    if (argc > 1) {
+        if (strcmp(argv[flag_index], "-l") == 0) {
+            display_mode = DETAILED_MODE;
+        } else if (strcmp(argv[flag_index], "-la") == 0 || strcmp(argv[flag_index], "-al") == 0) {
+            display_mode = ALL_MODE;
         }
-        while (progpath[len] != '/')
-            --len;
-        progpath[len] = '\0';
+    }
 
-        DIR *dir = opendir(progpath);
-        if (dir != NULL) {
-            if((err = LsDir(dir, progpath, flag))) {
+    // If no directories specified or only flag provided
+    if (argc == 1 || (argc == 2 && display_mode != SIMPLE_MODE)) {
+        char current_path[1024];
+        if (getcwd(current_path, sizeof(current_path))) {
+            DIR *dir = opendir(current_path);
+            if (dir) {
+                StatusCode status = list_directory(dir, current_path, display_mode);
                 closedir(dir);
-                return err;
+                return status;
             }
+        }
+        printf("Could not open current directory\n");
+        return ERROR_OPEN_DIR;
+    }
+
+    // Process each directory argument
+    for (int i = 1; (display_mode == SIMPLE_MODE) ? (i < argc) : (i < argc - 1); i++) {
+        DIR *dir = opendir(argv[i]);
+        if (dir) {
+            StatusCode status = list_directory(dir, argv[i], display_mode);
             closedir(dir);
-        } else {
-            printf("Could not open current directory\n");
-        }
-    }
-    else {
-        for (int i = 1; ((flag == NF)? (i < cnt) : (i < cnt - 1)); i++) {
-            DIR *dir = opendir(str_dirs[i]);
-            if (dir != NULL) {
-                if ((err = LsDir(dir, str_dirs[i], flag))) {
-                    closedir(dir);
-                    return err;
-                }
-                closedir(dir);
-            } else {
-                printf("Could not open directory '%s'\n", str_dirs[i]);
+            if (status != SUCCESS) {
+                return status;
             }
+        } else {
+            printf("Could not open directory '%s'\n", argv[i]);
         }
     }
     return SUCCESS;
 }
 
-int main(const int argc, char const *argv[]) {
-    return ls(argc, argv);
+int main(int argc, const char *argv[]) {
+    return process_arguments(argc, argv);
 }

@@ -1,5 +1,6 @@
 add_subdirectory(Lab1_1)
 add_subdirectory(Lab1_2)
+add_subdirectory(Lab1_3)
 add_subdirectory(Lab1_4)
 add_subdirectory(Lab1_5)
 add_subdirectory(Lab1_6)
