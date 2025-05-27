@@ -109,14 +109,14 @@ void man_leaves() {
     pthread_mutex_unlock(&bathroom.mutex);
 }
 
-void* woman_thread(void* arg) {
+void* woman_thread() {
     woman_wants_to_enter();
     sleep(1);
     woman_leaves();
     return NULL;
 }
 
-void* man_thread(void* arg) {
+void* man_thread() {
     man_wants_to_enter();
     sleep(1);
     man_leaves();

@@ -1,1 +1,2 @@
-add_executable(lab1_4 Lab1_4.cpp)
+add_executable(client_1_4 client.c)
+add_executable(server_1_4 server.c)
