@@ -14,6 +14,8 @@
 #include <memory>
 #include <ctime>
 #include <fstream>
+#include <string>
+#include <algorithm>
 
 // Вспомогательные функции для преобразования IP и портов
 std::string ip_to_string(in_addr_t ip) {
@@ -232,12 +234,13 @@ public:
     }
 
     void stop() {
-        running.store(false);
-        for (auto& t : threads) {
-            if (t.joinable()) t.join();
+        if (running.exchange(false)) {
+            for (auto& t : threads) {
+                if (t.joinable()) t.join();
+            }
+            threads.clear();
+            logger->info("LogGenerator stopped");
         }
-        threads.clear();
-        logger->info("LogGenerator stopped");
     }
 };
 
@@ -299,12 +302,13 @@ public:
     }
 
     void stop() {
-        running.store(false);
-        for (auto& t : threads) {
-            if (t.joinable()) t.join();
+        if (running.exchange(false)) {
+            for (auto& t : threads) {
+                if (t.joinable()) t.join();
+            }
+            threads.clear();
+            logger->info("LogAnalyzer stopped");
         }
-        threads.clear();
-        logger->info("LogAnalyzer stopped");
     }
 
     ip_stats get_stats_for_ip(in_addr_t ip) {
@@ -386,34 +390,64 @@ int main() {
 
     auto logger_builder = LoggerBuilder()
         .set_level(Logger::DEBUG)
-        .add_handler(std::cout);
-        //.add_handler(std::move(log_file));
+        .add_handler(std::cout)
+        .add_handler(std::move(log_file));
 
     std::shared_ptr<Logger> logger(logger_builder.make_object());
-
-    logger->info("Starting TCP traffic monitoring system");
-
     SynchronizedQueue<tcp_traffic_pkg> queue;
-
     LogGenerator generator(queue, logger, 4);
     LogAnalyzer analyzer(queue, logger, 4);
 
-    generator.start();
-    analyzer.start();
+    bool is_running = false;
+    std::string command;
 
-    std::this_thread::sleep_for(std::chrono::seconds(5));
+    std::cout << "TCP Traffic Monitor - Interactive Mode\n";
+    std::cout << "Commands: start, pause, exit\n";
 
-    //in_addr_t test_ip = htonl(0x0A000001);
-    //ip_stats stats = analyzer.get_stats_for_ip(test_ip);
-    //print_stats(stats, test_ip, logger);
+    while (true) {
+        std::cout << "> ";
+        std::getline(std::cin, command);
+        std::transform(command.begin(), command.end(), command.begin(), ::tolower);
 
-    logger->info("Shutting down system...");
-    generator.stop();
-    queue.shutdown();
-    analyzer.stop();
+        if (command == "start") {
+            if (!is_running) {
+                logger->info("Starting traffic generation and analysis...");
+                generator.start();
+                analyzer.start();
+                is_running = true;
+            } else {
+                logger->warning("System is already running");
+            }
+        }
+        else if (command == "pause") {
+            if (is_running) {
+                logger->info("Pausing traffic generation...");
+                generator.stop();
+                is_running = false;
+            } else {
+                logger->warning("System is not running");
+            }
+            auto global_stats = analyzer.get_global_stats();
+            logger->info("\nStatistics 1 el:");
+            auto entry = global_stats.begin();
+            print_stats(entry->second, entry->first, logger);
+        }
+        else if (command == "exit") {
+            logger->info("Shutting down system...");
+            if (is_running) {
+                generator.stop();
+            }
+            queue.shutdown();
+            analyzer.stop();
+            break;
+        }
+        else {
+            logger->warning("Unknown command. Available: start, pause, exit");
+        }
+    }
 
     auto global_stats = analyzer.get_global_stats();
-    logger->info("\nGlobal statistics:");
+    logger->info("\nFinal global statistics:");
     for (const auto& entry : global_stats) {
         print_stats(entry.second, entry.first, logger);
     }

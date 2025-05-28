@@ -48,7 +48,6 @@ enum returnType{
     MESSAGE_ERROR
 };
 
-
 typedef struct{
     unsigned char l, r, curPosition;
     Items buffer;
